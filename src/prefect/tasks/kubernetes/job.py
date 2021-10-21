@@ -757,22 +757,23 @@ class RunNamespacedJob(Task):
                     )
 
                     self.logger.info(f"Started following logs for {pod_name}")
-                    pod_log_streams[pod_name] = read_pod_logs.run()
+                    read_pod_logs.run()
+                    pod_log_streams[pod_name] = 1
 
-                if job.status.active:
-                    time.sleep(job_status_poll_interval)
-                elif job.status.failed:
-                    raise signals.FAIL(
-                        f"Job {job_name} failed, check Kubernetes pod logs for more information."
-                    )
-                elif job.status.succeeded:
-                    self.logger.info(f"Job {job_name} has been completed.")
-                    break
-
-            if delete_job_after_completion:
-                api_client_job.delete_namespaced_job(
-                    name=job_name,
-                    namespace=namespace,
-                    body=client.V1DeleteOptions(propagation_policy="Foreground"),
+            if job.status.active:
+                time.sleep(job_status_poll_interval)
+            elif job.status.failed:
+                raise signals.FAIL(
+                    f"Job {job_name} failed, check Kubernetes pod logs for more information."
                 )
-                self.logger.info(f"Job {job_name} has been deleted.")
+            elif job.status.succeeded:
+                self.logger.info(f"Job {job_name} has been completed.")
+                break
+
+        if delete_job_after_completion:
+            api_client_job.delete_namespaced_job(
+                name=job_name,
+                namespace=namespace,
+                body=client.V1DeleteOptions(propagation_policy="Foreground"),
+            )
+            self.logger.info(f"Job {job_name} has been deleted.")
