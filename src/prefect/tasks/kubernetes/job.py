@@ -724,41 +724,40 @@ class RunNamespacedJob(Task):
 
         pod_log_streams = {}
 
-        with ThreadPoolExecutor() as pool:
-            completed = False
-            while not completed:
-                job = api_client_job.read_namespaced_job_status(
-                    name=job_name, namespace=namespace
+        completed = False
+        while not completed:
+            job = api_client_job.read_namespaced_job_status(
+                name=job_name, namespace=namespace
+            )
+
+            if log_level is not None:
+                func_log = getattr(self.logger, log_level)
+
+                pod_selector = (
+                    f"controller-uid={job.metadata.labels['controller-uid']}"
+                )
+                pods_list = api_client_pod.list_namespaced_pod(
+                    namespace=namespace, label_selector=pod_selector
                 )
 
-                if log_level is not None:
-                    func_log = getattr(self.logger, log_level)
+                for pod in pods_list.items:
+                    pod_name = pod.metadata.name
 
-                    pod_selector = (
-                        f"controller-uid={job.metadata.labels['controller-uid']}"
+                    # Can't start logs when phase is pending
+                    if pod.status.phase == "Pending":
+                        continue
+                    if pod_name in pod_log_streams:
+                        continue
+
+                    read_pod_logs = ReadNamespacedPodLogs(
+                        pod_name=pod_name,
+                        namespace=namespace,
+                        kubernetes_api_key_secret=kubernetes_api_key_secret,
+                        on_log_entry=lambda log: func_log(f"{pod_name}: {log}"),
                     )
-                    pods_list = api_client_pod.list_namespaced_pod(
-                        namespace=namespace, label_selector=pod_selector
-                    )
 
-                    for pod in pods_list.items:
-                        pod_name = pod.metadata.name
-
-                        # Can't start logs when phase is pending
-                        if pod.status.phase == "Pending":
-                            continue
-                        if pod_name in pod_log_streams:
-                            continue
-
-                        read_pod_logs = ReadNamespacedPodLogs(
-                            pod_name=pod_name,
-                            namespace=namespace,
-                            kubernetes_api_key_secret=kubernetes_api_key_secret,
-                            on_log_entry=lambda log: func_log(f"{pod_name}: {log}"),
-                        )
-
-                        self.logger.info(f"Started following logs for {pod_name}")
-                        pod_log_streams[pod_name] = pool.submit(read_pod_logs.run)
+                    self.logger.info(f"Started following logs for {pod_name}")
+                    pod_log_streams[pod_name] = read_pod_logs.run()
 
                 if job.status.active:
                     time.sleep(job_status_poll_interval)
